@@ -239,89 +239,46 @@ public class RNZipArchiveModule extends ReactContextBaseJavaModule {
     }).start();
   }
 
-  @ReactMethod
-  public void zip(String fileOrDirectory, String destDirectory, Promise promise) {
-    List<String> filePaths = new ArrayList<>();
-
-    String fromDirectory;
-    try {
-      File tmp = new File(fileOrDirectory);
-      if (tmp.exists()) {
-        if (tmp.isDirectory()) {
-          fromDirectory = fileOrDirectory;
-          List<File> files = getSubFiles(tmp, true);
-          for (int i = 0; i < files.size(); i++) {
-            filePaths.add(files.get(i).getAbsolutePath());
-          }
+  private void zipDirectoryHelper(File rootDirectory, File currentDirectory, ZipOutputStream out) throws Exception {
+    byte[] data = new byte[2048];
+    File[] files = currentDirectory.listFiles();
+    if (files == null) {
+      // no files were found or this is not a directory
+    } else {
+      for (File file : files) {
+        if (file.isDirectory()) {
+          zipDirectoryHelper(rootDirectory, file, out);
         } else {
-          fromDirectory = fileOrDirectory.substring(0, fileOrDirectory.lastIndexOf("/"));
-          filePaths.add(fileOrDirectory);
-        }
-      } else {
-        throw new FileNotFoundException(fileOrDirectory);
-      }
-    } catch (FileNotFoundException | NullPointerException e) {
-      promise.reject(null, "Couldn't open file/directory " + fileOrDirectory + ".");
-      return;
-    }
+          FileInputStream fi = new FileInputStream(file);
+          // creating structure and avoiding duplicate file names
+          String name = file.getAbsolutePath().replace(rootDirectory.getAbsolutePath(), "");
 
-    try {
-      String[] filePathArray = filePaths.toArray(new String[filePaths.size()]);
-      zipStream(filePathArray, destDirectory, fromDirectory, filePaths.size());
-    } catch (Exception ex) {
-      promise.reject(null, ex.getMessage());
-      return;
-    }
-
-    promise.resolve(destDirectory);
-  }
-
-  private void zipStream(String[] files, String destFile, String fromDirectory, @SuppressWarnings("UnusedParameters") long totalSize) throws Exception {
-    try {
-      if (destFile.contains("/")) {
-        File destDir = new File(destFile.substring(0, destFile.lastIndexOf("/")));
-        if (!destDir.exists()) {
-          //noinspection ResultOfMethodCallIgnored
-          destDir.mkdirs();
-        }
-      }
-
-      if (new File(destFile).exists()) {
-        //noinspection ResultOfMethodCallIgnored
-        new File(destFile).delete();
-      }
-
-      BufferedInputStream origin;
-      FileOutputStream dest = new FileOutputStream(destFile);
-
-      ZipOutputStream out = new ZipOutputStream(new BufferedOutputStream(dest));
-
-      byte data[] = new byte[BUFFER_SIZE];
-
-      updateProgress(0, 1, destFile); // force 0%
-      for (int i = 0; i < files.length; i++) {
-        String absoluteFilepath = files[i];
-
-        if (!new File(absoluteFilepath).isDirectory()) {
-          FileInputStream fi = new FileInputStream(absoluteFilepath);
-          String filename = absoluteFilepath.replace(fromDirectory, "");
-          ZipEntry entry = new ZipEntry(filename);
+          ZipEntry entry = new ZipEntry(name);
           out.putNextEntry(entry);
-          origin = new BufferedInputStream(fi, BUFFER_SIZE);
           int count;
-          while ((count = origin.read(data, 0, BUFFER_SIZE)) != -1) {
+          BufferedInputStream origin = new BufferedInputStream(fi,2048);
+          while ((count = origin.read(data, 0 , 2048)) != -1){
             out.write(data, 0, count);
           }
           origin.close();
         }
       }
-      updateProgress(1, 1, destFile); // force 100%
-      out.close();
-    } catch (Exception ex) {
-      ex.printStackTrace();
-      updateProgress(0, 1, destFile); // force 0%
-      throw new Exception(String.format("Couldn't zip %s", destFile));
     }
+  }
+
+  @ReactMethod
+  public void zip(String fileOrDirectory, String destDirectory, Promise promise) {
+      File directoryToCompress = new File(fileOrDirectory);
+      try {
+          FileOutputStream dest = new FileOutputStream(new File(destDirectory));
+          ZipOutputStream zipOutputStream = new ZipOutputStream(dest);
+          zipDirectoryHelper(directoryToCompress, directoryToCompress, zipOutputStream);
+          zipOutputStream.close();
+          promise.resolve(destDirectory);
+      } catch (Exception e) {
+          e.printStackTrace();
+          promise.reject(null, "error");
+      }
   }
 
   private List<File> getSubFiles(File baseDir, boolean isContainFolder) {
